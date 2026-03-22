@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "eu.ansvar/german-competition-mcp",
+  "description": "Query Bundeskartellamt decisions, merger control cases, and sector enforcement activity under German competition law (GWB)",
+  "repository": {
+    "url": "https://github.com/Ansvar-Systems/german-competition-mcp",
+    "source": "github"
+  },
+  "homepage": "https://ansvar.eu",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "keywords": [
+    "bundeskartellamt",
+    "german-competition",
+    "gwb",
+    "cartel",
+    "merger-control",
+    "antitrust",
+    "germany",
+    "competition-law",
+    "compliance",
+    "mcp",
+    "ansvar"
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@ansvar/german-competition-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
