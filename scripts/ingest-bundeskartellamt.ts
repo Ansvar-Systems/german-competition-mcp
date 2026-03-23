@@ -47,7 +47,7 @@ const RETRY_BACKOFF_MS = 3000;
 const REQUEST_TIMEOUT_MS = 30_000;
 
 const USER_AGENT =
-  "AnsvarBot/1.0 (Bundeskartellamt-Ingestion; +https://ansvar.eu/bot)";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 /** Decision type paths on the Bundeskartellamt GSB CMS. */
 const DECISION_TYPES = [
@@ -205,7 +205,8 @@ async function fetchWithRetry(
       const res = await fetch(url, {
         headers: {
           "User-Agent": USER_AGENT,
-          Accept: "text/html,application/xhtml+xml",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           "Accept-Language": "de-DE,de;q=0.9,en;q=0.5",
         },
         signal: controller.signal,
@@ -258,35 +259,42 @@ function buildSearchUrl(
   year: number,
   page: number,
 ): string {
-  // The BKartA search uses these GET parameters on the Entscheidungssuche results page:
-  //   templateQueryString  — free text
-  //   cl2Categories_Typ    — decision type filter
-  //   year_dt              — year filter
-  //   gtp                  — pagination offset ("{page_id}_{offset}", e.g. "3590138_list%23telemediengesetz_10")
+  // The BKartA decision database uses Entscheidungsdatenbanksuche_Formular.html
+  // with these GET parameters:
+  //   cl2Categories_Arbeitsbereich — decision type filter (Kartellverbot, Fusionskontrolle, etc.)
+  //   cl2Categories_Erscheinungsjahr — publication year filter
+  //   gtp                          — pagination ("51558_list%3D{page_number}")
+  //   nn                           — node number (required by GSB CMS)
   //
-  // Simpler paginated listing URL pattern:
-  const offset = page * 10;
+  // Note: "Sektoruntersuchung" is not a valid Arbeitsbereich filter value on the
+  // search form. Sector inquiries are discovered via section pages instead.
   const params = new URLSearchParams({
-    cl2Categories_Typ: type,
-    year_dt: String(year),
-    "gtp": `3590138_list%23anchor_${offset}`,
+    nn: "86256",
+    cl2Categories_Arbeitsbereich: type,
+    cl2Categories_Erscheinungsjahr: year < 2022 ? "vor 2022" : String(year),
   });
-  return `${BASE_URL}/SiteGlobals/Forms/Suche/Entscheidungssuche_Formular.html?${params.toString()}`;
+  if (page > 0) {
+    params.set("gtp", `51558_list%3D${page + 1}`);
+  }
+  return `${BASE_URL}/SiteGlobals/Forms/Suche/Entscheidungsdatenbanksuche_Formular.html?${params.toString()}`;
 }
 
 /**
  * Generate direct SharedDocs URLs for known decision ID patterns.
  *
- * BKartA SharedDocs follow:
- *   /SharedDocs/Entscheidung/DE/{Type}/{Year_or_Subdir}/{CaseRef}.html
+ * BKartA SharedDocs follow two patterns:
+ *   /SharedDocs/Entscheidung/DE/Entscheidungen/{Type}/{Year}/{CaseRef}.html
+ *   /SharedDocs/Entscheidung/DE/Fallberichte/{Type}/{Year}/{CaseRef}.html
  *
- * We also try the alternative pattern with case number in the filename.
+ * The `subdir` parameter selects between "Entscheidungen" (decisions) and
+ * "Fallberichte" (case reports).
  */
 function buildDecisionUrl(
   type: DecisionType,
   caseRef: string,
+  subdir: "Entscheidungen" | "Fallberichte" = "Entscheidungen",
 ): string {
-  return `${BASE_URL}/SharedDocs/Entscheidung/DE/${type}/${encodeURIComponent(caseRef)}.html`;
+  return `${BASE_URL}/SharedDocs/Entscheidung/DE/${subdir}/${type}/${encodeURIComponent(caseRef)}.html`;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,8 +330,12 @@ function parseListingPage(html: string): ListingEntry[] {
     "#content a[href*='SharedDocs/Entscheidung']",
     "#content a[href*='SharedDocs/Publikation']",
     "a[href*='/Entscheidung/DE/']",
+    "a[href*='/Fallberichte/']",
     ".RichTextList a",
     "#main a[href*='Entscheidung']",
+    // GSB CMS result list pattern used by Entscheidungsdatenbanksuche
+    ".search-result-list a",
+    ".ContentList a[href*='SharedDocs']",
   ];
 
   for (const selector of resultSelectors) {
@@ -360,7 +372,7 @@ function parseListingPage(html: string): ListingEntry[] {
 
   // Strategy 2: Table rows (some BKartA pages list decisions in tables)
   $("table tbody tr, table tr").each((_i, row) => {
-    const link = $(row).find("a[href*='Entscheidung'], a[href*='SharedDocs']");
+    const link = $(row).find("a[href*='Entscheidung'], a[href*='Fallberichte'], a[href*='SharedDocs']");
     if (!link.length) return;
 
     const href = link.attr("href");
@@ -397,11 +409,14 @@ function parseListingPage(html: string): ListingEntry[] {
 
 /**
  * Check if a listing page has a "next" pagination link.
+ *
+ * The GSB CMS pagination uses numbered page links with gtp parameters and
+ * forward/next navigation links. We check for both patterns.
  */
 function hasNextPage(html: string): boolean {
   const $ = cheerio.load(html);
   return (
-    $("a.forward, a.next, a[title='naechste Seite'], a[title='Vor']").length > 0
+    $("a.forward, a.next, a[title='naechste Seite'], a[title='Vor'], a[href*='gtp=']").length > 0
   );
 }
 
@@ -1009,21 +1024,18 @@ async function crawlListingPages(
  * We probe well-known section landing pages to discover links.
  */
 async function crawlSectionPages(): Promise<void> {
-  // Known section landing pages that list decisions
+  // Known section landing pages that list decisions.
+  // The BKartA site uses /DE/Aufgaben/... paths (not /DE/Entscheidungen/).
   const sectionUrls = [
-    // Main decision categories
-    "/DE/Entscheidungen/Kartellverbot/kartellverbot_node.html",
-    "/DE/Entscheidungen/Fusionskontrolle/fusionskontrolle_node.html",
-    "/DE/Entscheidungen/Missbrauchsaufsicht/missbrauchsaufsicht_node.html",
-    "/DE/Entscheidungen/Vergaberecht/vergaberecht_node.html",
-    "/DE/Entscheidungen/Sektoruntersuchungen/sektoruntersuchungen_node.html",
-    // Alternative URL patterns
-    "/DE/Kartellverbot/kartellverbot_node.html",
-    "/DE/Fusionskontrolle/fusionskontrolle_node.html",
-    "/DE/Missbrauchsaufsicht/missbrauchsaufsicht_node.html",
-    "/DE/Sektoruntersuchungen/sektoruntersuchungen_node.html",
-    // Fallback listing pages
-    "/DE/Entscheidungen/entscheidungen_node.html",
+    // Main task area pages (link to decisions and case reports)
+    "/DE/Aufgaben/Kartelle/Kartellverfolgung/Kartellverfolgung_node.html",
+    "/DE/Aufgaben/Fusionen/fusionen_node.html",
+    "/DE/Aufgaben/Fusionen/Hauptpruefverfahren/hauptpruefverfahren_node.html",
+    "/DE/Aufgaben/Missbrauchsaufsicht/missbrauchsaufsicht_node.html",
+    "/DE/Aufgaben/Vergaberecht/vergaberecht_node.html",
+    "/DE/Aufgaben/Sektoruntersuchungen/sektoruntersuchungen_node.html",
+    // Decision database search (unfiltered — picks up all types)
+    "/SiteGlobals/Forms/Suche/Entscheidungsdatenbanksuche_Formular.html?nn=86256",
   ];
 
   for (const path of sectionUrls) {
@@ -1043,11 +1055,12 @@ async function crawlSectionPages(): Promise<void> {
 
     // Determine type from URL path
     let typeHint: DecisionType = "Missbrauchsaufsicht";
-    if (path.toLowerCase().includes("kartellverbot")) typeHint = "Kartellverbot";
-    else if (path.toLowerCase().includes("fusionskontrolle"))
+    const lowerPath = path.toLowerCase();
+    if (lowerPath.includes("kartell")) typeHint = "Kartellverbot";
+    else if (lowerPath.includes("fusion") || lowerPath.includes("hauptpruef"))
       typeHint = "Fusionskontrolle";
-    else if (path.toLowerCase().includes("vergabe")) typeHint = "Vergaberecht";
-    else if (path.toLowerCase().includes("sektor"))
+    else if (lowerPath.includes("vergabe")) typeHint = "Vergaberecht";
+    else if (lowerPath.includes("sektor"))
       typeHint = "Sektoruntersuchung";
 
     for (const entry of entries) {
@@ -1063,10 +1076,10 @@ async function crawlSectionPages(): Promise<void> {
  * that link to decision documents.
  */
 async function crawlPublicationsPage(): Promise<void> {
-  // The BKartA has a publications search with case decisions linked
+  // The BKartA has a publications search and press releases that link to decisions
   const pubUrls = [
-    "/SharedDocs/Publikation/DE/Berichte/berichte_node.html",
-    "/DE/Presse/presse_node.html",
+    "/SiteGlobals/Forms/Suche/Expertensuche_Formular.html?nn=86256&cl2Categories_CategorizedFormat=pressemeldungen_aktuelles&sortOrder=dateOfIssue_dt+desc",
+    "/DE/Aufgaben/Kartelle/Kartelle_node.html",
   ];
 
   for (const path of pubUrls) {
@@ -1088,6 +1101,7 @@ async function crawlPublicationsPage(): Promise<void> {
       // Only follow links that look like decisions
       if (
         entry.url.includes("Entscheidung") ||
+        entry.url.includes("Fallberichte") ||
         entry.url.includes("SharedDocs")
       ) {
         await crawlDecisionPage(
@@ -1189,10 +1203,26 @@ async function main(): Promise<void> {
   await crawlSectionPages();
 
   // Phase 2: Crawl search form results by type and year
+  // Note: "Sektoruntersuchung" is not a valid Arbeitsbereich filter on the
+  // decision database search form — sector inquiries are found via section pages.
+  const searchableTypes = types.filter((t) => t !== "Sektoruntersuchung");
+  // The search form offers individual years for 2022+ and a single "vor 2022"
+  // bucket for everything before 2022. Build a deduplicated year list so we
+  // don't send the same "vor 2022" query 22 times.
+  const years: number[] = [];
+  for (let y = yearEnd; y >= yearStart; y--) {
+    // Years < 2022 all map to the same "vor 2022" filter value, so only keep one.
+    if (y < 2022) {
+      if (!years.includes(2021)) years.push(2021); // sentinel for "vor 2022"
+      break;
+    }
+    years.push(y);
+  }
   console.log("\n--- Phase 2: Search form results (type x year) ---");
-  for (const type of types) {
-    for (let year = yearEnd; year >= yearStart; year--) {
-      console.log(`\nCrawling ${type} / ${year}:`);
+  for (const type of searchableTypes) {
+    for (const year of years) {
+      const label = year < 2022 ? `vor 2022` : String(year);
+      console.log(`\nCrawling ${type} / ${label}:`);
       await crawlListingPages(type, year);
     }
   }
