@@ -278,3 +278,42 @@ export function listSectors(): Sector[] {
     .prepare("SELECT * FROM sectors ORDER BY decision_count DESC, merger_count DESC")
     .all() as Sector[];
 }
+
+// --- Data freshness -----------------------------------------------------------
+
+export interface DataFreshness {
+  decisions_latest_date: string | null;
+  mergers_latest_date: string | null;
+  decisions_count: number;
+  mergers_count: number;
+  sectors_count: number;
+  checked_at: string;
+}
+
+export function getDataFreshness(): DataFreshness {
+  const db = getDb();
+  const decisionsLatest = db
+    .prepare("SELECT MAX(date) AS latest FROM decisions")
+    .get() as { latest: string | null };
+  const mergersLatest = db
+    .prepare("SELECT MAX(date) AS latest FROM mergers")
+    .get() as { latest: string | null };
+  const decisionsCount = db
+    .prepare("SELECT COUNT(*) AS count FROM decisions")
+    .get() as { count: number };
+  const mergersCount = db
+    .prepare("SELECT COUNT(*) AS count FROM mergers")
+    .get() as { count: number };
+  const sectorsCount = db
+    .prepare("SELECT COUNT(*) AS count FROM sectors")
+    .get() as { count: number };
+
+  return {
+    decisions_latest_date: decisionsLatest.latest,
+    mergers_latest_date: mergersLatest.latest,
+    decisions_count: decisionsCount.count,
+    mergers_count: mergersCount.count,
+    sectors_count: sectorsCount.count,
+    checked_at: new Date().toISOString(),
+  };
+}

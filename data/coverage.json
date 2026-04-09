@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "jurisdiction": "DE",
+  "authority": "Bundeskartellamt",
+  "authority_en": "German Federal Cartel Office",
+  "official_url": "https://www.bundeskartellamt.de/",
+  "categories": [
+    {
+      "id": "abuse_of_dominance",
+      "label": "Abuse of Dominance",
+      "label_de": "Marktmissbrauch",
+      "gwb_basis": ["§ 19", "§ 20", "§ 21 GWB"]
+    },
+    {
+      "id": "cartel",
+      "label": "Cartel Enforcement",
+      "label_de": "Kartellverfolgung",
+      "gwb_basis": ["§ 1", "§ 2 GWB", "Art. 101 TFEU"]
+    },
+    {
+      "id": "sector_inquiry",
+      "label": "Sector Inquiry",
+      "label_de": "Sektoruntersuchung",
+      "gwb_basis": ["§ 32e GWB"]
+    },
+    {
+      "id": "merger_phase1",
+      "label": "Merger Control — Phase I",
+      "label_de": "Fusionskontrolle Phase I",
+      "gwb_basis": ["§ 35 ff. GWB"]
+    },
+    {
+      "id": "merger_phase2",
+      "label": "Merger Control — Phase II",
+      "label_de": "Fusionskontrolle Phase II (Hauptprüfverfahren)",
+      "gwb_basis": ["§ 40 GWB"]
+    }
+  ],
+  "sectors": [
+    "digital_economy",
+    "energy",
+    "food_retail",
+    "automotive",
+    "financial_services",
+    "healthcare",
+    "media",
+    "telecommunications"
+  ],
+  "exclusions": [
+    "Landeskartellbehörden (state-level cartel authorities — separate from Bundeskartellamt)",
+    "Court appeals (Beschwerdeverfahren vor dem OLG Düsseldorf / BGH)",
+    "EU Commission decisions (DG COMP)",
+    "Private damages litigation"
+  ]
+}

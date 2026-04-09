@@ -29,7 +29,9 @@ import {
   searchMergers,
   getMerger,
   listSectors,
+  getDataFreshness,
 } from "./db.js";
+import { buildCitation } from "./citation.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -129,7 +131,31 @@ const TOOLS = [
       "Return metadata about this MCP server: version, data source, coverage, and tool list.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
   },
+  {
+    name: "de_comp_list_sources",
+    description:
+      "List the primary data sources used by this MCP server, including authority name, official URL, and coverage notes.",
+    inputSchema: { type: "object" as const, properties: {}, required: [] },
+  },
+  {
+    name: "de_comp_check_data_freshness",
+    description:
+      "Check the freshness of the underlying data: returns the latest decision/merger dates, record counts per table, and the timestamp of this check.",
+    inputSchema: { type: "object" as const, properties: {}, required: [] },
+  },
 ];
+
+// --- Shared _meta block -------------------------------------------------------
+
+const META = {
+  disclaimer:
+    "This data is sourced from publicly available Bundeskartellamt publications. It is provided for informational purposes only and does not constitute legal advice. Coverage may be incomplete.",
+  copyright:
+    "© Bundeskartellamt. Data reproduced for research and informational purposes.",
+  source_url: "https://www.bundeskartellamt.de/",
+  data_note:
+    "Covers enforcement decisions (abuse of dominance, cartel, sector inquiries) and merger control (Phase I/II). Excludes Landeskartellbehörden, court appeals, and EU Commission decisions.",
+};
 
 // --- Zod schemas -------------------------------------------------------------
 
@@ -195,7 +221,7 @@ function createMcpServer(): Server {
             outcome: parsed.outcome,
             limit: parsed.limit,
           });
-          return textContent({ results, count: results.length });
+          return textContent({ results, count: results.length, _meta: META });
         }
 
         case "de_comp_get_decision": {
@@ -204,7 +230,18 @@ function createMcpServer(): Server {
           if (!decision) {
             return errorContent(`Decision not found: ${parsed.case_number}`);
           }
-          return textContent(decision);
+          const decisionRecord = decision as Record<string, unknown>;
+          return textContent({
+            ...decisionRecord,
+            _citation: buildCitation(
+              String(decisionRecord.case_number ?? parsed.case_number),
+              String(decisionRecord.title ?? decisionRecord.case_number ?? parsed.case_number),
+              "de_comp_get_decision",
+              { case_number: parsed.case_number },
+              decisionRecord.url as string | undefined,
+            ),
+            _meta: META,
+          });
         }
 
         case "de_comp_search_mergers": {
@@ -215,7 +252,7 @@ function createMcpServer(): Server {
             outcome: parsed.outcome,
             limit: parsed.limit,
           });
-          return textContent({ results, count: results.length });
+          return textContent({ results, count: results.length, _meta: META });
         }
 
         case "de_comp_get_merger": {
@@ -224,12 +261,23 @@ function createMcpServer(): Server {
           if (!merger) {
             return errorContent(`Merger case not found: ${parsed.case_number}`);
           }
-          return textContent(merger);
+          const mergerRecord = merger as Record<string, unknown>;
+          return textContent({
+            ...mergerRecord,
+            _citation: buildCitation(
+              String(mergerRecord.case_number ?? parsed.case_number),
+              String(mergerRecord.title ?? mergerRecord.case_number ?? parsed.case_number),
+              "de_comp_get_merger",
+              { case_number: parsed.case_number },
+              mergerRecord.url as string | undefined,
+            ),
+            _meta: META,
+          });
         }
 
         case "de_comp_list_sectors": {
           const sectors = listSectors();
-          return textContent({ sectors, count: sectors.length });
+          return textContent({ sectors, count: sectors.length, _meta: META });
         }
 
         case "de_comp_about": {
@@ -239,8 +287,42 @@ function createMcpServer(): Server {
             description:
               "Bundeskartellamt (German Federal Cartel Office) MCP server. Provides access to German competition law enforcement decisions, merger control cases, and sector enforcement data under the GWB (Gesetz gegen Wettbewerbsbeschränkungen).",
             data_source: "Bundeskartellamt (https://www.bundeskartellamt.de/)",
+            coverage: {
+              decisions: "Abuse of dominance (Marktmissbrauch), cartel enforcement, and sector inquiries",
+              mergers: "Merger control decisions (Fusionskontrolle) — Phase I and Phase II",
+              sectors: "Digital economy, energy, food retail, automotive, financial services, healthcare, media, telecommunications",
+            },
             tools: TOOLS.map((t) => ({ name: t.name, description: t.description })),
+            _meta: META,
           });
+        }
+
+        case "de_comp_list_sources": {
+          return textContent({
+            sources: [
+              {
+                authority: "Bundeskartellamt",
+                authority_en: "German Federal Cartel Office",
+                url: "https://www.bundeskartellamt.de/",
+                decisions_url: "https://www.bundeskartellamt.de/EN/Decisions/decisions_node.html",
+                mergers_url: "https://www.bundeskartellamt.de/EN/MergerControl/mergercontrol_node.html",
+                coverage: "Enforcement decisions (abuse of dominance, cartel, sector inquiries) and merger control (Phase I/II)",
+                jurisdiction: "Germany (federal)",
+                language: "de",
+                exclusions: [
+                  "Landeskartellbehörden (state-level cartel authorities)",
+                  "Court appeals (Beschwerdeverfahren)",
+                  "EU Commission decisions",
+                ],
+              },
+            ],
+            _meta: META,
+          });
+        }
+
+        case "de_comp_check_data_freshness": {
+          const freshness = getDataFreshness();
+          return textContent({ ...freshness, _meta: META });
         }
 
         default:
